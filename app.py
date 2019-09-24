@@ -131,6 +131,16 @@ class App(object):
     def run(self, port=8090, ip='127.0.0.1', debug=True):
         run_simple(ip, port, self, use_debugger=debug, use_reloader=True)
 
+def render_template(template_name,**context):
+    '''
+    :param template_name:模板名字
+    :param context: 传递给模板的字典参数
+    :return: template
+    '''
+    template_path = os.path.join(os.getcwd(), 'templates')
+    jinja_env = Environment(loader=FileSystemLoader(template_path), autoescape=True)
+    return jinja_env.get_template(template_name).render(context)
+
 
 _request_stk = LocalStack()
 current_app = LocalProxy(lambda: _request_stk.top.app)
