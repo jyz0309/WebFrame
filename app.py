@@ -1,19 +1,20 @@
 import os
-from werkzeug.wrappers import BaseRequest, BaseResponse
+from werkzeug.wrappers import Request, Response
 from werkzeug.exceptions import HTTPException, MethodNotAllowed, \
      NotImplemented, NotFound
 from werkzeug.routing import Map, Rule
 from werkzeug.serving import run_simple
+from werkzeug.utils import redirect
 from werkzeug.local import LocalStack,LocalProxy
 from jinja2 import Environment,FileSystemLoader
 from werkzeug.contrib.securecookie import SecureCookie
 
 
-class Request(BaseRequest):
+class Request(Request):
     """Encapsulates a request."""
 
 
-class Response(BaseResponse):
+class Response(Response):
     """Encapsulates a response."""
 
 class _RequestContext(object):
@@ -23,6 +24,7 @@ class _RequestContext(object):
     """
     def __init__(self, app, environ):
         self.app = app
+        self.url_adapter = app.url_map.bind_to_environ(environ) # url适配器
         self.request = Request(environ)
         self.session = app.open_session(self.request)
 
@@ -35,6 +37,26 @@ class _RequestContext(object):
         # 这将允许调试器（debugger）在交互式shell中仍然可以获取请求对象。
         if tb is None or not self.app.debug:
             _request_stk.pop()
+
+
+def render_template(template_name,**context):
+    '''
+    :param template_name:模板名字
+    :param context: 传递给模板的字典参数
+    :return: template
+    '''
+    template_path = os.path.join(os.getcwd(), 'templates')
+    jinja_env = Environment(loader=FileSystemLoader(template_path), autoescape=True)
+    return jinja_env.get_template(template_name).render(context)
+
+
+def url_for(endpoint, **values):
+    '''
+    :param endpoint:url地址
+    :param context: 传递给url的字典参数
+    '''
+    print(_request_ctx_stack.top.url_adapter.build(endpoint, values))
+    # return _request_stk.top.url_adapter.build(endpoint.get_func(),values)
 
 
 class View(object):
@@ -84,18 +106,32 @@ class App(object):
             self.save_session(session,response)
         return response
 
+    def make_response(self, rv):
+        # 判断rv的类型
+        if isinstance(rv, Response):
+            return rv
+        if isinstance(rv, str):
+            return Response(rv)
+        if isinstance(rv, tuple):
+            return Response(*rv)
+        return Response.force_type(rv, request.environ)
+
     def wsgi_app(self,environ,start_response):
         with self.request_context(environ):
             req = Request(environ)
             response = self.dispatch_request(req)
+            # print(type(response))
             if response:#如果可以找到正确的匹配项
-                response = Response(response, content_type='text/html; charset=UTF-8')
+                # response = Response(response, content_type='text/html; charset=UTF-8')
+                response = self.make_response(response)
                 response = self.process_response(response)
             else:#找不到，返回404NotFound
                 response = Response('<h1>404 Not Found<h1>', content_type='text/html; charset=UTF-8', status=404)
+
             return response(environ, start_response)
 
-    def open_session(self, request):
+
+    def open_session(self, request):#
         """创建或打开一个新的session，默认的实现是存储所有的session数据到一个签名的cookie中，前提是secret_key属性被设置
         :param request: Request实例
         """
@@ -113,6 +149,7 @@ class App(object):
 
     def dispatch_request(self, req):
         adapter = self.url_map.bind_to_environ(req.environ)
+        self.url_map.bind_to_environ(req.environ)
         try:
             endpoint, value = adapter.match()
             return self.view[endpoint](req, **value)
@@ -127,23 +164,11 @@ class App(object):
             self.url_map.add(Rule(url,endpoint=str(urls[url])))
             self.view[str(urls[url])] = urls[url].get_func()
 
-
     def run(self, port=8090, ip='127.0.0.1', debug=True):
         run_simple(ip, port, self, use_debugger=debug, use_reloader=True)
-
-def render_template(template_name,**context):
-    '''
-    :param template_name:模板名字
-    :param context: 传递给模板的字典参数
-    :return: template
-    '''
-    template_path = os.path.join(os.getcwd(), 'templates')
-    jinja_env = Environment(loader=FileSystemLoader(template_path), autoescape=True)
-    return jinja_env.get_template(template_name).render(context)
 
 
 _request_stk = LocalStack()
 current_app = LocalProxy(lambda: _request_stk.top.app)
 request = LocalProxy(lambda: _request_stk.top.request)
 session = LocalProxy(lambda: _request_stk.top.session)
-
